@@ -14,21 +14,12 @@ function checkEvent(props) {
       eventExists = true;
       for (paramIndex in props.params) {
         let param = props.params[paramIndex];
-        if (!log.args[param.name])
-          assert.fail(`Event field ${param.name} not found`);
+        if (!log.args[param.name]) assert.fail(`Event field ${param.name} not found`);
 
         if (BN.isBN(log.args[param.name])) {
-          assert.equal(
-            log.args[param.name].toString(),
-            param.val.toString(),
-            "Event value did not match"
-          );
+          assert.strictEqual(log.args[param.name].toString(), param.val.toString(), "Event value did not match");
         } else {
-          assert.equal(
-            log.args[param.name],
-            param.val,
-            "Event value did not match"
-          );
+          assert.strictEqual(log.args[param.name], param.val, "Event value did not match");
         }
       }
     }

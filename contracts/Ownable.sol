@@ -5,28 +5,28 @@ contract Ownable {
 
   address private owner;
 
+  event LogOwnerChanged(
+    address indexed sender,
+    address indexed newOwner
+  );
+
   constructor() public {
     owner = msg.sender;
   }
 
-  modifier onlyOwner(){
+  modifier onlyOwner {
     require(msg.sender == owner, "Can only be called by the owner");
     _;
   }
 
-  event LogOwnerChange(
-    address indexed sender,
-    address indexed owner
-  );
-
-  function getOwner() public view returns(address){
+  function getOwner() public view returns(address) {
     return owner;
   }
 
-  function setOwner(address newOwner) public onlyOwner(){
+  function setOwner(address newOwner) public onlyOwner {
     require(newOwner != address(0), "newOwner is empty");
     owner = newOwner;
-    emit LogOwnerChange(msg.sender, owner);
+    emit LogOwnerChanged(msg.sender, newOwner);
   }
 
 }

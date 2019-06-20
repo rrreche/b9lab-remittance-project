@@ -14,64 +14,78 @@ contract Remittance is Ownable {
     uint256 deadline;
   }
 
-  mapping(bytes32 => LockedBalances) lockedBalances;
-  mapping(address => uint256) balances;
-  uint256 fee;
-  bool dead = false;
-
-  constructor(uint256 amount) public {
-    fee = amount;
-  }
-
-  event LogLockBalance(
+  event LogBalanceLocked(
     address indexed sender,
     bytes32 indexed passwordHash,
     uint256 balance,
     uint256 deadline
   );
 
-  event LogClaimBack(
+  event LogBalanceClaimedBack(
     address indexed sender,
-    bytes32 indexed passwordHash,
-    uint256 balance
+    bytes32 indexed passwordHash
   );
 
-  event LogChallengeLock(
+  event LogLockChallenged(
     address indexed sender,
-    bytes32 indexed passwordHash,
-    uint256 balance
+    bytes32 indexed passwordHash
   );
 
-  modifier mustBeAlive(){
-    require(dead == false, "The contract is no longer available");
+  event LogFeesCollected(
+    address indexed sender,
+    uint256 collectedFees
+  );
+
+  event LogKilled(
+    address indexed sender
+  );
+
+  uint256 constant oneDayInMillis = 1 days;
+
+  mapping(bytes32 => LockedBalances) public lockedBalances;
+  uint256 public fee;
+  uint256 public collectedFees;
+  bool public dead = false;
+
+  constructor(uint256 mFee) public {
+    fee = mFee;
+  }
+
+  modifier mustBeAlive {
+    require(!dead, "The contract is no longer available");
     _;
   }
 
-  function lockBalance(bytes32 passwordHash, uint256 deadline, address exchange) public payable mustBeAlive() {
+  function lockBalance(bytes32 passwordHash, uint256 deadline, address exchange) public payable mustBeAlive {
     require(exchange != address(0), "Exchange must be non-zero address");
-    require(msg.value > fee, "Transferred value must be greater than the fee");
-    require(lockedBalances[passwordHash].owner != address(0), "Password has been used");
+
+    uint256 mFee = fee;
+
+    require(msg.value > mFee, "Transferred value must be greater than the fee");
+    require(lockedBalances[passwordHash].deadline == 0, "Password has been used");
     require(block.timestamp < deadline, "Deadline is in the past");
-    require(deadline < block.timestamp + 1 days, "Deadline is too big. Max: 1 day");
+    require(deadline < block.timestamp.add(oneDayInMillis), "Deadline is too big. Max: 1 day");
 
     lockedBalances[passwordHash] = LockedBalances({
       owner: msg.sender,
       exchange: exchange,
-      balance: msg.value,
+      balance: msg.value.sub(mFee),
       deadline: deadline
     });
 
-    emit LogLockBalance(msg.sender, passwordHash, msg.value, deadline);
+    collectedFees = collectedFees.add(mFee);
+
+    emit LogBalanceLocked(msg.sender, passwordHash, msg.value, deadline); // Might change msg.value for msg.value.sub(mFee)...?
   }
 
-  function challengeLock(bytes32 word1, bytes32 word2) public {
-    bytes32 passwordHash = generatePassword(word1, word2);
-    require(lockedBalances[passwordHash].exchange == msg.sender, "The ether can be claimed only from the exchange address");
+  function challengeLock(bytes32 plainTextPassword) public {
+    bytes32 passwordHash = generatePassword(plainTextPassword);
     require(lockedBalances[passwordHash].balance > 0, "This lock has not ether");
+    require(lockedBalances[passwordHash].exchange == msg.sender, "The ether can be claimed only from the exchange address");
     uint256 balance = lockedBalances[passwordHash].balance;
     lockedBalances[passwordHash].balance = 0;
-    balances[msg.sender] = balances[msg.sender].add(balance);
-    emit LogChallengeLock(msg.sender, passwordHash, balance);
+    emit LogLockChallenged(msg.sender, passwordHash);
+    msg.sender.transfer(balance);
   }
 
   function claimBack(bytes32 passwordHash) public {
@@ -82,24 +96,26 @@ contract Remittance is Ownable {
     uint256 balance = lockedBalances[passwordHash].balance;
     lockedBalances[passwordHash].balance = 0;
 
-    emit LogClaimBack(msg.sender, passwordHash, balance);
+    emit LogBalanceClaimedBack(msg.sender, passwordHash);
 
     msg.sender.transfer(balance);
   }
 
-  function withdraw() public {
-    require(balances[msg.sender] > 0, "This address has no ether");
-    uint256 balance = balances[msg.sender];
-    balances[msg.sender] = 0;
-    msg.sender.transfer(balance);
+  function collectFees() public onlyOwner {
+    uint256 recollection = collectedFees;
+    require(recollection > 0, "There are no collected fees at this moment");
+    collectedFees = 0;
+    emit LogFeesCollected(msg.sender, recollection);
+    msg.sender.transfer(recollection);
   }
 
-  function kill() public onlyOwner() {
+  function kill() public onlyOwner {
+    emit LogKilled(msg.sender);
     dead = true;
   }
 
-  function generatePassword(bytes32 word1, bytes32 word2) public pure returns (bytes32){
-    return keccak256(abi.encode(word1, word2));
+  function generatePassword(bytes32 plainTextPassword) public view returns (bytes32){
+    return keccak256(abi.encodePacked(address(this), plainTextPassword));
   }
 
   function() external {
