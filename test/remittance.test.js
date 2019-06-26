@@ -16,19 +16,23 @@ contract("Remittance", accounts => {
 
   before("define Alice, Bob and Carol", function() {
     [alice, bob, carol, david] = accounts;
+    // Alice: contract owner
+    // Bob: offchain user, does not have participation in tests
+    // Carol: exchange
+    // David: dishonest user
   });
 
   beforeEach("initialize contract", async function() {
     contract = await Remittance.new(fee, { from: alice });
-    hashedPassword = generatePassword(contract.address, plainTextPassword);
+    hashedPassword = generatePassword(contract.address, plainTextPassword, carol);
   });
 
   describe("generatePassword()", () => {
-    it("should generate the equal hash from same inputs", async function() {
-      const contractGeneratedPassword = await contract.generatePassword(asciiToHex(plainTextPassword, 32), {
+    it("should generate an equal hash from same inputs", async function() {
+      const contractGeneratedPassword = await contract.generatePassword(asciiToHex(plainTextPassword, 32), carol, {
         from: alice
       });
-      const helperGeneratedPassword = generatePassword(contract.address, plainTextPassword);
+      const helperGeneratedPassword = generatePassword(contract.address, plainTextPassword, carol);
 
       assert.strictEqual(
         contractGeneratedPassword,
@@ -66,7 +70,6 @@ contract("Remittance", accounts => {
         assert.strictEqual(lockedBalance.owner, alice, "Owner of lock was incorrectly assigned");
         assert.strictEqual(lockedBalance.balance.toString(), remittedValue.sub(fee).toString(), "Unexpected balances");
         assert.strictEqual(lockedBalance.deadline.toString(), deadline.toString(), "Unexpected deadline");
-        assert.strictEqual(lockedBalance.exchange, carol, "Exchange address of lock was incorrectly assigned");
 
         // Balance of the smart contract:
         assert.strictEqual(
@@ -76,7 +79,7 @@ contract("Remittance", accounts => {
         );
 
         // Collected fee:
-        assert.strictEqual((await contract.collectedFees()).toString(), fee.toString(), "Collected fee mismatch");
+        assert.strictEqual((await contract.collectedFees(alice)).toString(), fee.toString(), "Collected fee mismatch");
 
         // Events triggered:
         assert.strictEqual(tx.logs.length, 1);
@@ -256,11 +259,7 @@ contract("Remittance", accounts => {
           assert.fail("Transaction should have failed");
         } catch (e) {
           if (e.reason) {
-            assert.strictEqual(
-              e.reason,
-              "The ether can be claimed only from the exchange address",
-              "Transaction failed for the wrong reasons"
-            );
+            assert.strictEqual(e.reason, "This lock has not ether", "Transaction failed for the wrong reasons");
           } else {
             console.error(e);
             assert.fail("Transaction failed for the wrong reasons");
@@ -443,7 +442,7 @@ contract("Remittance", accounts => {
             .toString(),
           "Unexpected balance for the owner address"
         );
-        assert.strictEqual((await contract.collectedFees()).toString(), "0", "collectedFees was not set to 0");
+        assert.strictEqual((await contract.collectedFees(alice)).toString(), "0", "collectedFees was not set to 0");
       });
 
       it("rejects call if collectedFees is 0", async function() {
@@ -458,20 +457,6 @@ contract("Remittance", accounts => {
               "There are no collected fees at this moment",
               "Transaction failed for the wrong reasons"
             );
-          } else {
-            console.error(e);
-            assert.fail("Transaction failed for the wrong reasons");
-          }
-        }
-      });
-
-      it("rejects call if the sender is not the owner", async function() {
-        try {
-          await contract.collectFees({ from: david });
-          assert.fail("Transaction should have failed");
-        } catch (e) {
-          if (e.reason) {
-            assert.strictEqual(e.reason, "Can only be called by the owner", "Transaction failed for the wrong reasons");
           } else {
             console.error(e);
             assert.fail("Transaction failed for the wrong reasons");
