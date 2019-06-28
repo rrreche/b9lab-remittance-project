@@ -1,14 +1,14 @@
 pragma solidity >= 0.5.0 <0.6.0;
 
 
-import "./Ownable.sol";
+import "./Pausable.sol";
 import "./SafeMath.sol";
 
-contract Remittance is Ownable {
+contract Remittance is Pausable {
   using SafeMath for uint256;
 
   struct LockedBalances {
-    address owner;
+    address sender;
     uint256 balance;
     uint256 deadline;
   }
@@ -35,38 +35,27 @@ contract Remittance is Ownable {
     uint256 collectedFees
   );
 
-  event LogKilled(
-    address indexed sender
-  );
-
-  uint256 constant oneDayInSeconds = 1 days;
+  uint256 constant oneMonthInSeconds = 30 days;
 
   mapping(bytes32 => LockedBalances) public lockedBalances;
   uint256 public fee;
   mapping(address => uint256) public collectedFees;
-  bool public dead = false;
+  bool public dead;
 
-  constructor(uint256 mFee) public {
+  constructor(uint256 mFee, bool startPaused) Pausable(startPaused) public {
     fee = mFee;
   }
 
-  modifier mustBeAlive {
-    require(!dead, "The contract is no longer available");
-    _;
-  }
-
-  function lockBalance(bytes32 passwordHash, uint256 deadline, address exchange) public payable mustBeAlive returns (bool) {
-    require(exchange != address(0), "Exchange must be non-zero address");
-
+  function lockBalance(bytes32 passwordHash, uint256 deadline) public payable mustBeRunning mustBeAlive returns (bool) {
     uint256 mFee = fee;
 
     require(msg.value > mFee, "Transferred value must be greater than the fee");
-    require(lockedBalances[passwordHash].owner == address(0), "Password has been used");
+    require(lockedBalances[passwordHash].sender == address(0), "Password has been used");
     require(block.timestamp < deadline, "Deadline is in the past");
-    require(deadline < block.timestamp.add(oneDayInSeconds), "Deadline is too big. Max: 1 day");
+    require(deadline < block.timestamp.add(oneMonthInSeconds), "Deadline is too big. Max: 30 days");
 
     lockedBalances[passwordHash] = LockedBalances({
-      owner: msg.sender,
+      sender: msg.sender,
       balance: msg.value.sub(mFee),
       deadline: deadline
     });
@@ -82,7 +71,7 @@ contract Remittance is Ownable {
 
     bytes32 passwordHash = generatePassword(plainTextPassword, msg.sender);
     uint256 balance = lockedBalances[passwordHash].balance;
-    require(lockedBalances[passwordHash].balance > 0, "This lock has not ether");
+    require(balance > 0, "This lock has not ether");
     lockedBalances[passwordHash].balance = 0;
     lockedBalances[passwordHash].deadline = 0;
     emit LogLockChallenged(msg.sender, passwordHash);
@@ -94,7 +83,7 @@ contract Remittance is Ownable {
     uint256 balance = lockedBalances[passwordHash].balance;
 
     require(balance > 0, "This lock has not ether");
-    require(lockedBalances[passwordHash].owner == msg.sender, "You must be the owner of the lock");
+    require(lockedBalances[passwordHash].sender == msg.sender, "You must be the sender of the lock");
     require(lockedBalances[passwordHash].deadline < now, "Deadline has not passed yet");
 
     lockedBalances[passwordHash].balance = 0;
@@ -114,12 +103,8 @@ contract Remittance is Ownable {
     return true;
   }
 
-  function kill() public onlyOwner {
-    emit LogKilled(msg.sender);
-    dead = true;
-  }
-
   function generatePassword(bytes32 plainTextPassword, address exchange) public view returns (bytes32) {
+    require(exchange != address(0), "Exchange must be non-zero address");
     return keccak256(abi.encodePacked(address(this), plainTextPassword, exchange));
   }
 

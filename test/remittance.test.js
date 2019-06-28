@@ -23,7 +23,7 @@ contract("Remittance", accounts => {
   });
 
   beforeEach("initialize contract", async function() {
-    contract = await Remittance.new(fee, { from: alice });
+    contract = await Remittance.new(fee, false, { from: alice });
     hashedPassword = generatePassword(contract.address, plainTextPassword, carol);
   });
 
@@ -39,6 +39,22 @@ contract("Remittance", accounts => {
         helperGeneratedPassword,
         "Password and helper do not generate the same password hash"
       );
+    });
+
+    it("rejects settings exchange address to 0x0", async function() {
+      try {
+        const contractGeneratedPassword = await contract.generatePassword(
+          asciiToHex(plainTextPassword, 32),
+          "0x0000000000000000000000000000000000000000",
+          {
+            from: alice
+          }
+        );
+
+        assert.fail("Transaction should have failed");
+      } catch (e) {
+        assert.isTrue(e.toString().includes("Exchange must be non-zero address"));
+      }
     });
   });
 
@@ -59,7 +75,7 @@ contract("Remittance", accounts => {
           .add(12, "hours")
           .unix();
 
-        const tx = await contract.lockBalance(hashedPassword, deadline, carol, {
+        const tx = await contract.lockBalance(hashedPassword, deadline, {
           from: alice,
           value: remittedValue.toString()
         });
@@ -67,7 +83,7 @@ contract("Remittance", accounts => {
         // Locked balance entry:
         const lockedBalance = await contract.lockedBalances(hashedPassword);
 
-        assert.strictEqual(lockedBalance.owner, alice, "Owner of lock was incorrectly assigned");
+        assert.strictEqual(lockedBalance.sender, alice, "Owner of lock was incorrectly assigned");
         assert.strictEqual(lockedBalance.balance.toString(), remittedValue.sub(fee).toString(), "Unexpected balances");
         assert.strictEqual(lockedBalance.deadline.toString(), deadline.toString(), "Unexpected deadline");
 
@@ -101,13 +117,13 @@ contract("Remittance", accounts => {
           .add(12, "hours")
           .unix();
 
-        await contract.lockBalance(hashedPassword, deadline, carol, {
+        await contract.lockBalance(hashedPassword, deadline, {
           from: alice,
           value: remittedValue.toString()
         });
 
         try {
-          const tx = await contract.lockBalance(hashedPassword, deadline, carol, {
+          const tx = await contract.lockBalance(hashedPassword, deadline, {
             from: alice,
             value: remittedValue.toString()
           });
@@ -129,7 +145,7 @@ contract("Remittance", accounts => {
             .subtract(1, "seconds")
             .unix();
 
-          const tx = await contract.lockBalance(hashedPassword, deadline, carol, {
+          const tx = await contract.lockBalance(hashedPassword, deadline, {
             from: alice,
             value: remittedValue.toString()
           });
@@ -145,13 +161,13 @@ contract("Remittance", accounts => {
         }
       });
 
-      it("rejects setting a deadline further than 1 day", async function() {
+      it("rejects setting a deadline further than 30 days", async function() {
         try {
           const deadline = moment(Date.now())
-            .add(1, "days")
+            .add(30, "days")
             .unix();
 
-          const tx = await contract.lockBalance(hashedPassword, deadline, carol, {
+          const tx = await contract.lockBalance(hashedPassword, deadline, {
             from: alice,
             value: remittedValue.toString()
           });
@@ -159,36 +175,9 @@ contract("Remittance", accounts => {
           assert.fail("Transaction should have failed");
         } catch (e) {
           if (e.reason) {
-            assert.strictEqual(e.reason, "Deadline is too big. Max: 1 day", "Transaction failed for the wrong reasons");
-          } else {
-            console.error(e);
-            assert.fail("Transaction failed for the wrong reasons");
-          }
-        }
-      });
-
-      it("rejects settings exchange address to 0x0", async function() {
-        try {
-          const deadline = moment(Date.now())
-            .add(1, "days")
-            .unix();
-
-          const tx = await contract.lockBalance(
-            hashedPassword,
-            deadline,
-            "0x0000000000000000000000000000000000000000",
-            {
-              from: alice,
-              value: remittedValue.toString()
-            }
-          );
-
-          assert.fail("Transaction should have failed");
-        } catch (e) {
-          if (e.reason) {
             assert.strictEqual(
               e.reason,
-              "Exchange must be non-zero address",
+              "Deadline is too big. Max: 30 days",
               "Transaction failed for the wrong reasons"
             );
           } else {
@@ -210,7 +199,7 @@ contract("Remittance", accounts => {
           .add(12, "hours")
           .unix();
 
-        await contract.lockBalance(hashedPassword, deadline, carol, {
+        await contract.lockBalance(hashedPassword, deadline, {
           from: alice,
           value: remittedValue.toString()
         });
@@ -310,7 +299,7 @@ contract("Remittance", accounts => {
           .add(12, "hours")
           .unix();
 
-        await contract.lockBalance(hashedPassword, deadline, carol, {
+        await contract.lockBalance(hashedPassword, deadline, {
           from: alice,
           value: remittedValue.toString()
         });
@@ -357,7 +346,7 @@ contract("Remittance", accounts => {
           );
         });
 
-        it("should reject call from non-owner", async function() {
+        it("should reject call from non-sender", async function() {
           try {
             await contract.claimBack(hashedPassword, { from: david });
             assert.fail("Transaction should have failed");
@@ -365,7 +354,7 @@ contract("Remittance", accounts => {
             if (e.reason) {
               assert.strictEqual(
                 e.reason,
-                "You must be the owner of the lock",
+                "You must be the sender of the lock",
                 "Transaction failed for the wrong reasons"
               );
             } else {
@@ -419,7 +408,7 @@ contract("Remittance", accounts => {
           .add(12, "hours")
           .unix();
 
-        await contract.lockBalance(hashedPassword, deadline, carol, {
+        await contract.lockBalance(hashedPassword, deadline, {
           from: alice,
           value: remittedValue.toString()
         });
@@ -464,24 +453,15 @@ contract("Remittance", accounts => {
         }
       });
     });
-    describe("kill()", () => {
-      it("updates state and registers event", async function() {
-        const tx = await contract.kill({ from: alice });
 
-        checkEvent({
-          logs: tx.logs,
-          name: "LogKilled",
-          params: [{ name: "sender", val: alice }]
-        });
-
-        assert.isTrue(await contract.dead(), "Killed state was not recorded correctly");
+    describe("When paused", () => {
+      beforeEach("pause", async () => {
+        await contract.pause({ from: alice });
       });
 
       it("rejects further locking", async function() {
-        await contract.kill({ from: alice });
-
         try {
-          const tx = await contract.lockBalance(asciiToHex(plainTextPassword), 0, carol, {
+          const tx = await contract.lockBalance(asciiToHex(plainTextPassword), 0, {
             from: alice,
             value: remittedValue.toString()
           });
@@ -489,30 +469,32 @@ contract("Remittance", accounts => {
           assert.fail("Transaction should have failed");
         } catch (e) {
           if (e.reason) {
-            assert.strictEqual(
-              e.reason,
-              "The contract is no longer available",
-              "Transaction failed for the wrong reasons"
-            );
+            assert.strictEqual(e.reason, "The contract is paused", "Transaction failed for the wrong reasons");
           } else {
             console.error(e);
             assert.fail("Transaction failed for the wrong reasons");
           }
         }
       });
+    });
+    describe("When killed", () => {
+      beforeEach("pause and kill", async () => {
+        await contract.pause({ from: alice });
+        await contract.kill({ from: alice });
+      });
 
-      it("rejects call if sender is not the owner", async function() {
+      it("rejects further locking", async function() {
         try {
-          await contract.kill({ from: david });
+          const tx = await contract.lockBalance(asciiToHex(plainTextPassword), 0, {
+            from: alice,
+            value: remittedValue.toString()
+          });
 
           assert.fail("Transaction should have failed");
         } catch (e) {
-          if (e.reason) {
-            assert.strictEqual(e.reason, "Can only be called by the owner", "Transaction failed for the wrong reasons");
-          } else {
-            console.error(e);
-            assert.fail("Transaction failed for the wrong reasons");
-          }
+          assert.isTrue(
+            e.toString().includes("Error: Returned error: VM Exception while processing transaction: revert")
+          );
         }
       });
     });
